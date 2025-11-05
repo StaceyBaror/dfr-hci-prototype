@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install system deps (WeasyPrint optional)
+      - name: Install system deps (WeasyPrint optional) + jq
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpango-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libcairo2
+          sudo apt-get install -y libpango-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libcairo2 jq
 
       - name: Install Python deps
         run: |
@@ -33,6 +33,43 @@ jobs:
 
       - name: Evaluate metrics
         run: python eval/evaluate.py
+
+      - name: Summarize metrics in job summary
+        run: |
+          echo "## Evaluation Metrics" >> $GITHUB_STEP_SUMMARY
+          FILE=""
+          if [ -f docs/evidence/metrics_runtime.json ]; then
+            FILE=docs/evidence/metrics_runtime.json
+          elif [ -f docs/evidence/metrics.json ]; then
+            FILE=docs/evidence/metrics.json
+          fi
+          if [ -z "$FILE" ]; then
+            echo "_No metrics JSON found in docs/evidence/_." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          PREC=$(jq -r '.precision // .Precision // empty' "$FILE")
+          REC=$(jq -r '.recall // .Recall // empty' "$FILE")
+          F1=$(jq -r '.f1 // .F1 // empty' "$FILE")
+          N=$(jq -r '.n_test // .n // empty' "$FILE")
+          CM=$(jq -r '.confusion_matrix // empty' "$FILE")
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Precision:** ${PREC:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Recall:** ${REC:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "- **F1 Score:** ${F1:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Samples (n):** ${N:-N/A}" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$CM" ] && [ "$CM" != "null" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Confusion Matrix** \`[[TN, FP], [FN, TP]]\`:" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            echo "$CM" | jq . >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Source: \`$FILE\`_" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload metrics artifacts
         uses: actions/upload-artifact@v4
