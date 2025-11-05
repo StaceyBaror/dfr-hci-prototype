@@ -1,0 +1,6 @@
+text,label,dept
+"Urgent: reset your password immediately at this link",phishing,Engineering
+"Team, sprint review is at 3pm. No prod changes till then.",benign,Engineering
+"Security update: confirm your account within 24 hours",phishing,Finance
+"Reminder: benefits enrollment closes Friday",benign,HR
+"Your mailbox is full. Click to upgrade storage now",phishing,IT
