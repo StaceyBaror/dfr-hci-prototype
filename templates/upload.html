@@ -9,41 +9,85 @@
 <body class="bg-light">
 <div class="container py-4">
   <h1 class="mb-3">Upload Message</h1>
-  <p class="text-muted mb-4">Submit a message to create an artifact (SHA-256 is recorded for integrity).</p>
-  <form method="post" action="/ui/upload" class="card p-3 shadow-sm">
+  <p class="text-muted mb-4">
+    Submit a message to create an artifact. A SHA-256 hash is recorded to ensure forensic integrity.
+  </p>
+
+  <form id="uploadForm" method="post" action="/ui/upload" class="card p-3 shadow-sm" novalidate>
     <div class="mb-3">
-      <label class="form-label">Message ID</label>
-      <input name="message_id" class="form-control" placeholder="msg-001" required
+      <label class="form-label" for="message_id">Message ID</label>
+      <input id="message_id" name="message_id" class="form-control" placeholder="msg-001"
+             required autofocus maxlength="64"
              value="{{ prefill.message_id if prefill else '' }}">
+      <div class="form-text">Use a short unique ID (e.g., ticket ref or email UID).</div>
     </div>
+
     <div class="mb-3">
-      <label class="form-label">Department</label>
-      <input name="dept" class="form-control" placeholder="General"
+      <label class="form-label" for="dept">Department</label>
+      <input id="dept" name="dept" class="form-control" placeholder="General" maxlength="64"
              value="{{ prefill.dept if prefill else 'General' }}">
     </div>
+
     <div class="mb-3">
-      <label class="form-label">User (email)</label>
-      <input name="user" class="form-control" placeholder="analyst@org"
+      <label class="form-label" for="user">User (email)</label>
+      <input id="user" name="user" type="email" class="form-control" placeholder="analyst@org"
+             maxlength="120"
              value="{{ prefill.user if prefill else 'unknown@org' }}">
     </div>
+
     <div class="mb-3">
-      <label class="form-label">Text</label>
-      <textarea name="text" rows="6" class="form-control" required>{{ prefill.text if prefill else '' }}</textarea>
+      <label class="form-label" for="text">Text</label>
+      <textarea id="text" name="text" rows="6" class="form-control" required
+                wrap="soft" spellcheck="false"
+                maxlength="20000">{{ prefill.text if prefill else '' }}</textarea>
+      <div class="form-text">Paste the full message body. Headers optional.</div>
     </div>
-    <button class="btn btn-primary">Create Artifact</button>
+
+    <div class="d-flex gap-2 align-items-center">
+      <button id="submitBtn" class="btn btn-primary" type="submit">
+        <span class="spinner-border spinner-border-sm me-2 d-none" id="spinner"></span>
+        Create Artifact
+      </button>
+      <a class="btn btn-outline-secondary" href="/ui/dashboard">Go to Dashboard</a>
+      <a class="btn btn-outline-info" href="/auth/token?role=analyst" target="_blank">Get Analyst Token</a>
+    </div>
   </form>
 
-  {% if result %}
-  <div class="alert alert-success mt-4">
-    <div><b>Artifact:</b> {{ result.artifact_id }}</div>
-    <div><b>SHA-256:</b> <code>{{ result.sha256 }}</code></div>
-    <div class="mt-2">
-      <a class="btn btn-outline-secondary btn-sm" href="/ui/dashboard">Go to Dashboard</a>
+  {% if result and result.error %}
+    <div class="alert alert-danger mt-4">
+      <strong>Error:</strong> {{ result.error }}
     </div>
-  </div>
+  {% elif result %}
+    <div class="alert alert-success mt-4">
+      <div><strong>Artifact:</strong> {{ result.artifact_id }}</div>
+      <div><strong>SHA-256:</strong> <code>{{ result.sha256 }}</code></div>
+      <div class="mt-2 d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/ui/dashboard">Go to Dashboard</a>
+      </div>
+    </div>
   {% endif %}
 
-  <p class="text-muted mt-4">Server time: {{ now }}</p>
+  <p class="text-muted mt-4">Server time (UTC): {{ now }}</p>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("uploadForm");
+  const button = document.getElementById("submitBtn");
+  const spinner = document.getElementById("spinner");
+
+  form.addEventListener("submit", () => {
+    button.disabled = true;
+    spinner.classList.remove("d-none");
+  });
+
+  window.addEventListener("pageshow", () => {
+    // Re-enable if user returns via back navigation
+    button.disabled = false;
+    spinner.classList.add("d-none");
+  });
+});
+</script>
+
 </body>
 </html>

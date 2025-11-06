@@ -8,24 +8,27 @@
 </head>
 <body class="bg-light">
 <div class="container py-4">
-  <h3 class="mb-3">DFR-HCI Prototype — Dashboard</h3>
-  <p class="text-muted">UTC: {{ now }}</p>
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="h3 mb-0">DFR-HCI Dashboard</h1>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="/ui/upload">Upload</a>
+      <a class="btn btn-outline-info btn-sm" href="/auth/token?role=analyst" target="_blank">Get Analyst Token</a>
+    </div>
+  </div>
+  <p class="text-muted">Paste your analyst token and click <b>Load</b> to fetch metrics and recent detections.</p>
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <label class="form-label">Analyst Token</label>
-      <input id="token" type="text" class="form-control" placeholder="Paste token from /auth/token?role=analyst">
-      <div class="mt-3 d-flex flex-wrap gap-2 align-items-center">
-        <button class="btn btn-primary" onclick="loadSummary()">Load</button>
-        <a class="btn btn-outline-secondary" href="/ui/upload">Upload page</a>
-        <a class="btn btn-outline-info" href="/auth/token?role=analyst" target="_blank">Get token</a>
-
-        <div class="ms-auto d-flex align-items-center gap-2">
-          <label for="limit" class="form-label m-0">Last N:</label>
-          <input id="limit" type="number" min="1" value="10" class="form-control" style="width: 90px;">
-          <button id="detect-btn" class="btn btn-success" onclick="detectNow()">Detect now</button>
-        </div>
+      <label class="form-label" for="token">Analyst Token</label>
+      <input id="token" type="text" class="form-control" placeholder='eyJhbGciOi... or {"token":"eyJ..."}'>
+      <div class="mt-2 d-flex align-items-center gap-2">
+        <button class="btn btn-primary" id="btn-load">
+          <span class="spinner-border spinner-border-sm me-2 d-none" id="spinner"></span>
+          Load
+        </button>
+        <button class="btn btn-outline-secondary" id="btn-clear">Clear</button>
       </div>
+      <div id="err" class="alert alert-danger mt-3 d-none" role="alert"></div>
     </div>
   </div>
 
@@ -33,7 +36,7 @@
     <div class="col-md-4">
       <div class="card shadow-sm h-100">
         <div class="card-body">
-          <h5>Totals</h5>
+          <h5 class="card-title">Totals</h5>
           <div class="display-6"><span id="tot">—</span></div>
           <div class="text-muted">Detections processed</div>
           <hr>
@@ -45,9 +48,9 @@
     <div class="col-md-8">
       <div class="card shadow-sm h-100">
         <div class="card-body">
-          <h5>By Department</h5>
+          <h5 class="card-title">By Department</h5>
           <div class="table-responsive">
-            <table class="table table-sm">
+            <table class="table table-sm mb-0">
               <thead><tr><th>Dept</th><th>Total</th><th>Alerts</th></tr></thead>
               <tbody id="dept-rows"></tbody>
             </table>
@@ -59,109 +62,128 @@
 
   <div class="card shadow-sm mt-3">
     <div class="card-body">
-      <h5>Recent Detections</h5>
+      <h5 class="card-title">Recent Detections</h5>
       <ul id="recent-list" class="list-group"></ul>
     </div>
   </div>
+
+  <p class="text-muted mt-4" id="server-time"></p>
 </div>
 
 <script>
-function getToken() {
-  const t = document.getElementById('token').value.trim();
-  if (!t) { alert('Paste an analyst token first (from /auth/token?role=analyst).'); }
-  return t;
-}
+(function() {
+  const $ = (id) => document.getElementById(id);
 
-async function loadSummary() {
-  const token = getToken(); if (!token) return;
-  const hdrs = { 'Authorization': 'Bearer ' + token };
+  const elTot = $('tot'),
+        elAlrt = $('alrt'),
+        elDeptRows = $('dept-rows'),
+        elRecent = $('recent-list'),
+        elErr = $('err'),
+        elToken = $('token'),
+        elServerTime = $('server-time'),
+        btnLoad = $('btn-load'),
+        btnClear = $('btn-clear'),
+        spinner = $('spinner');
 
-  const s = await fetch('/viz/summary', { headers: hdrs });
-  if (!s.ok) { alert('summary failed: ' + s.status); return; }
-  const j = await s.json();
-  document.getElementById('tot').textContent = j.total ?? '0';
-  document.getElementById('alrt').textContent = j.alerts ?? '0';
-
-  const tbl = document.getElementById('dept-rows');
-  tbl.innerHTML = '';
-  Object.entries(j.by_dept || {}).forEach(([dept, vals]) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${dept}</td><td>${vals.total}</td><td>${vals.alerts}</td>`;
-    tbl.appendChild(tr);
-  });
-
-  await loadRecent();
-}
-
-async function loadRecent() {
-  const token = getToken(); if (!token) return;
-  const hdrs = { 'Authorization': 'Bearer ' + token };
-  const r = await fetch('/viz/recent?limit=10', { headers: hdrs });
-  if (!r.ok) { alert('recent failed: ' + r.status); return; }
-  const jr = await r.json();
-  const list = document.getElementById('recent-list');
-  list.innerHTML = '';
-  (jr.items || []).forEach(it => {
-    const li = document.createElement('li');
-    li.className = 'list-group-item';
-    li.innerHTML =
-      `<div class="d-flex justify-content-between align-items-start">
-         <div class="me-3">
-           <div><b>${it.artifact_id}</b> — ${it.y_hat} (${(it.confidence||0).toFixed(3)})</div>
-           <div class="text-muted small">${it.dept} • ${it.user} • ${it.ts}</div>
-         </div>
-         <div class="d-flex gap-2">
-           <button class="btn btn-sm btn-outline-primary" onclick="explain('${it.artifact_id}')">Explain</button>
-           <a class="btn btn-sm btn-outline-secondary" href="/report/${it.artifact_id}" target="_blank">Report</a>
-         </div>
-       </div>`;
-    list.appendChild(li);
-  });
-}
-
-async function explain(id) {
-  const token = getToken(); if (!token) return;
-  const r = await fetch('/xai/' + encodeURIComponent(id), {
-    headers: { 'Authorization': 'Bearer ' + token }
-  });
-  if (!r.ok) { alert('XAI failed: ' + r.status); return; }
-  const s = await r.json();
-  const img = new Image();
-  img.style.maxWidth = '720px';
-  img.className = 'mt-2';
-  img.src = 'data:image/png;base64,' + s.shap_png_base64;
-
-  const wrap = document.createElement('div');
-  wrap.className = 'list-group-item';
-  wrap.appendChild(img);
-  document.getElementById('recent-list').prepend(wrap);
-}
-
-a<script>
-  async function detectNow() {
-    const token = document.getElementById('token').value.trim();
-    if (!token) { alert('Paste an analyst token first (from /auth/token?role=analyst).'); return; }
-
-    const n = parseInt(document.getElementById('limit').value, 10) || 10;
-    const btn = document.getElementById('detect-btn');
-    btn.disabled = true;
-    const originalLabel = btn.textContent;
-    btn.textContent = 'Detecting...';
-
-    try {
-      const resp = await fetch('/detect_batch?limit=' + encodeURIComponent(n), {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!resp.ok) throw new Error('detect failed: ' + resp.status);
-      const j = await resp.json();
-      alert(`Processed ${j.count} artifact(s); alerts: ${j.alerts}.`);
-      await loadSummary();
-    } catch (e) {
-      alert(e.message || String(e));
-    } finally {
-      btn.disabled = false;
-      btn.textContent = originalLabel;
+  function showError(msg) {
+    elErr.textContent = msg;
+    elErr.classList.remove('d-none');
+  }
+  function clearError() {
+    elErr.classList.add('d-none');
+    elErr.textContent = '';
+  }
+  function setLoading(loading) {
+    btnLoad.disabled = loading;
+    if (loading) {
+      spinner.classList.remove('d-none');
+      btnLoad.setAttribute('aria-busy', 'true');
+    } else {
+      spinner.classList.add('d-none');
+      btnLoad.removeAttribute('aria-busy');
     }
   }
+  function parseTokenInput(s) {
+    s = (s || '').trim();
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj === 'object' && obj.token) return obj.token;
+    } catch (_) {}
+    return s; // assume raw JWT
+  }
+  async function fetchJSON(url, token) {
+    const res = await fetch(url, {
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(res.status + ' ' + res.statusText + ' — ' + txt);
+    }
+    return res.json();
+  }
+  function resetUI() {
+    elTot.textContent = '—';
+    elAlrt.textContent = '—';
+    elDeptRows.innerHTML = '';
+    elRecent.innerHTML = '';
+    elServerTime.textContent = '';
+  }
+
+  async function loadAll() {
+    clearError();
+    resetUI();
+    const token = parseTokenInput(elToken.value);
+    if (!token || !token.includes('.')) { showError('Paste a valid JWT (or JSON with a "token" field).'); return; }
+
+    setLoading(true);
+    try {
+      const summary = await fetchJSON('/viz/summary', token);
+      elTot.textContent = summary.total ?? 0;
+      elAlrt.textContent = summary.alerts ?? 0;
+
+      elDeptRows.innerHTML = '';
+      const by = summary.by_dept || {};
+      Object.keys(by).sort().forEach(dept => {
+        const vals = by[dept] || {};
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${dept}</td><td>${vals.total ?? 0}</td><td>${vals.alerts ?? 0}</td>`;
+        elDeptRows.appendChild(tr);
+      });
+
+      const recent = await fetchJSON('/viz/recent?limit=10', token);
+      elRecent.innerHTML = '';
+      (recent.items || []).forEach(it => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        const conf = (it.confidence ?? 0).toFixed(3);
+        li.innerHTML =
+          `<div>
+             <div><strong>${it.artifact_id}</strong> — ${it.y_hat} (${conf})</div>
+             <div class="text-muted small">${it.dept ?? '—'} • ${it.user ?? '—'} • ${it.ts ?? '—'}</div>
+           </div>
+           <a class="btn btn-sm btn-outline-primary" href="/report/${it.artifact_id}" target="_blank">Report</a>`;
+        elRecent.appendChild(li);
+      });
+
+      const rootRes = await fetchJSON('/', null);
+      elServerTime.textContent = `Server time (UTC): ${rootRes.time || '—'}`;
+    } catch (err) {
+      showError(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  btnLoad.addEventListener('click', loadAll);
+  btnClear.addEventListener('click', () => {
+    elToken.value = '';
+    clearError();
+    resetUI();
+  });
+
+  // Re-enable Load if user navigates back to this page
+  window.addEventListener('pageshow', () => setLoading(false));
+})();
 </script>
+</body>
+</html>
