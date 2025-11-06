@@ -5,6 +5,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
+from pathlib import Path, PurePath
+import hashlib, json, time
 import json
 
 BASE = Path(__file__).resolve().parents[2]  # repo root
@@ -38,3 +40,22 @@ joblib.dump(pipe, MODELS / "model.pkl")
 
 print("Model saved →", MODELS / "model.pkl")
 print("Metrics saved →", EVID / "metrics.json")
+
+MODELS = Path("data/models")
+MODELS.mkdir(parents=True, exist_ok=True)
+
+# Model version
+(MODELS / "VERSION").write_text("v0.1.0", encoding="utf-8")
+
+# Dataset hash (stable over sorted lines)
+data_path = Path("data/samples/samples.csv")
+if data_path.exists():
+    ds = data_path.read_bytes()
+    (MODELS / "DATASET.SHA256").write_text(hashlib.sha256(ds).hexdigest(), encoding="utf-8")
+
+# Optional: write quick metrics.json used by CI
+metrics = {"trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "algo": "logreg", "notes": "MVP TF-IDF + LogisticRegression"}
+Path("docs/evidence").mkdir(parents=True, exist_ok=True)
+(Path("docs/evidence") / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+

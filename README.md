@@ -1,10 +1,10 @@
-# 🧠 DFR-HCI Prototype  
+# DFR-HCI Prototype  
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
 Prototype implementation of the **Digital Forensic Readiness – Human-to-Human Communication Interaction (DFR-HCI)** framework  
-developed as part of *Dr. Stacey O. Baror’s* PhD research at the **University of Pretoria**.
+developed as part of * Stacey O. Baror’s* PhD research at the **University of Pretoria**.
 
 ---
 
