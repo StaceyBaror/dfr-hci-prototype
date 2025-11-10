@@ -5,11 +5,9 @@ import argparse
 import json
 import os
 from pathlib import Path
-
 import joblib
 import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
-
 
 def normalize_label(v):
     """Map common string/boolean-ish labels to {0,1}."""
@@ -26,7 +24,6 @@ def normalize_label(v):
         return 0
     # fallback: treat anything else as 0
     return 0
-
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate detection model on samples.csv")

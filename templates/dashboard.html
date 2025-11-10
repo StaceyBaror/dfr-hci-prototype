@@ -5,10 +5,6 @@
   <title>DFR-HCI • Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    .thumb { width: 80px; height: 48px; object-fit: cover; border-radius: .4rem; }
-    .cm-cell { min-width: 56px; text-align: center; }
-  </style>
 </head>
 <body class="bg-light">
 <div class="container py-4">
@@ -22,7 +18,8 @@
 
   <p class="text-muted">
     Paste your analyst token and click <b>Load</b> to fetch metrics and recent detections.
-    Token gates <code>/viz/*</code>, <code>/report/*</code>, <code>/report_pdf/*</code>, <code>/xai/*</code>.
+    This token is required for protected endpoints like <code>/viz/*</code>, <code>/report/*</code>,
+    <code>/report_pdf/*</code>, <code>/xai/*</code>, and <code>/xai/png/*</code>.
   </p>
 
   <!-- Token input + controls -->
@@ -37,9 +34,12 @@
         </button>
         <button class="btn btn-outline-secondary" id="btn-clear">Clear</button>
       </div>
+
+      <!-- Helpful hint when no token is set -->
       <div id="hint" class="alert alert-warning mt-3 d-none">
-        No token detected. Click <b>Get Analyst Token</b>, copy it here, then press <b>Load</b>.
+        No token detected. Click <b>Get Analyst Token</b> above, copy the token, paste it here, and press <b>Load</b>.
       </div>
+
       <div id="err" class="alert alert-danger mt-3 d-none" role="alert"></div>
     </div>
   </div>
@@ -73,34 +73,25 @@
     </div>
   </div>
 
-  <!-- Time series -->
+  <!-- Model Evaluation (metrics & confusion matrix) -->
   <div class="card shadow-sm mt-3">
     <div class="card-body">
-      <h5 class="card-title">Detections over time (last 30 days)</h5>
-      <canvas id="seriesChart" height="80"></canvas>
-    </div>
-  </div>
-
-  <!-- Confusion matrix -->
-  <div class="card shadow-sm mt-3">
-    <div class="card-body">
-      <div class="d-flex align-items-center justify-content-between">
-        <h5 class="card-title mb-0">Evaluation — Confusion Matrix</h5>
-        <div class="text-muted small" id="cm-note"></div>
+      <h5 class="card-title">Model Evaluation</h5>
+      <p class="text-muted small mb-2">
+        These links expose the evaluation artefacts used in Chapter&nbsp;10 (precision, recall, F<sub>1</sub>, confusion matrix).
+        Make sure you have obtained an analyst token first (the token must be sent as an Authorization header).
+      </p>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-primary" href="/viz/metrics" target="_blank">
+          Metrics JSON
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="/viz/confusion.png" target="_blank">
+          Confusion Matrix (PNG)
+        </a>
       </div>
-      <div class="row g-3 mt-2">
-        <div class="col-md-6">
-          <div class="table-responsive">
-            <table class="table table-sm align-middle">
-              <thead id="cm-head"></thead>
-              <tbody id="cm-body"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="col-md-6">
-          <img id="cm-img" class="img-fluid rounded border" alt="Confusion Matrix Heatmap">
-        </div>
-      </div>
+      <p class="text-muted small mt-2 mb-0">
+        Right-click the confusion matrix PNG and save it for inclusion in your thesis.
+      </p>
     </div>
   </div>
 
@@ -108,14 +99,13 @@
   <div class="card shadow-sm mt-3">
     <div class="card-body">
       <h5 class="card-title">Recent Detections</h5>
-      <ul id="recent-list" class="list-group mt-2"></ul>
+      <ul id="recent-list" class="list-group"></ul>
     </div>
   </div>
 
   <p class="text-muted mt-4" id="server-time"></p>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function() {
   const $ = (id) => document.getElementById(id);
@@ -130,157 +120,235 @@
         elServerTime = $('server-time'),
         btnLoad = $('btn-load'),
         btnClear = $('btn-clear'),
-        spinner = $('spinner'),
-        seriesCanvas = $('seriesChart'),
-        cmHead = $('cm-head'),
-        cmBody = $('cm-body'),
-        cmImg  = $('cm-img'),
-        cmNote = $('cm-note');
+        spinner = $('spinner');
 
-  let seriesChart;
-
-  // cookies
+  // --- Simple cookie helpers (no regex) ---
   function setCookie(name, value, seconds) {
-    const d = new Date(); d.setTime(d.getTime() + seconds*1000);
-    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${d.toUTCString()}; path=/; SameSite=Lax`;
-  }
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp('(?:^|; )'+name.replace(/([.$?*|{}()[\\]\\/\\+^])/g,'\\$1')+'=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
+    const maxAge = seconds || 0;
+    document.cookie = name + '=' + encodeURIComponent(value) +
+      '; path=/' +
+      (maxAge ? '; max-age=' + maxAge : '') +
+      '; SameSite=Lax';
   }
 
-  function showError(msg){ elErr.textContent = msg; elErr.classList.remove('d-none'); }
-  function clearError(){ elErr.classList.add('d-none'); elErr.textContent = ''; }
-  function setHint(v){ elHint.classList.toggle('d-none', !v); }
-  function setLoading(v){
-    btnLoad.disabled = v;
-    spinner.classList.toggle('d-none', !v);
-    btnLoad.toggleAttribute('aria-busy', v);
+  function getCookie(name) {
+    const parts = document.cookie.split(';');
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const idx = trimmed.indexOf('=');
+      const key = idx >= 0 ? trimmed.slice(0, idx) : trimmed;
+      const val = idx >= 0 ? trimmed.slice(idx + 1) : '';
+      if (key === name) {
+        try {
+          return decodeURIComponent(val);
+        } catch (_) {
+          return val;
+        }
+      }
+    }
+    return null;
   }
-  function parseTokenInput(s){
-    s = (s||'').trim();
-    try { const o = JSON.parse(s); if (o && typeof o==='object' && o.token) return o.token; } catch(_){}
+
+  function showError(msg) {
+    elErr.textContent = msg;
+    elErr.classList.remove('d-none');
+  }
+  function clearError() {
+    elErr.classList.add('d-none');
+    elErr.textContent = '';
+  }
+  function setHint(visible) {
+    elHint.classList.toggle('d-none', !visible);
+  }
+  function setLoading(loading) {
+    btnLoad.disabled = loading;
+    if (loading) {
+      spinner.classList.remove('d-none');
+      btnLoad.setAttribute('aria-busy', 'true');
+    } else {
+      spinner.classList.add('d-none');
+      btnLoad.removeAttribute('aria-busy');
+    }
+  }
+
+  function parseTokenInput(s) {
+    s = (s || '').trim();
+    if (!s) return '';
+    // Try JSON with { "token": "eyJ..." }
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj === 'object' && obj.token) return String(obj.token).trim();
+    } catch (_) {}
+    // Otherwise assume raw JWT
     return s;
   }
-  async function fetchJSON(url, token){
-    const res = await fetch(url, { headers: token ? { Authorization: 'Bearer '+token } : {} });
-    if(!res.ok){ throw new Error(`${res.status} ${res.statusText} — ${await res.text()}`); }
+
+  async function fetchJSON(url, token) {
+    const headers = {};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(res.status + ' ' + res.statusText + ' — ' + txt);
+    }
     return res.json();
   }
-  function resetUI(){
-    elTot.textContent = '—'; elAlrt.textContent = '—';
-    elDeptRows.innerHTML = ''; elRecent.innerHTML = ''; elServerTime.textContent = '';
-    cmHead.innerHTML = ''; cmBody.innerHTML = ''; cmImg.removeAttribute('src'); cmNote.textContent = '';
-    if (seriesChart) { seriesChart.destroy(); seriesChart = null; }
+
+  function resetUI() {
+    elTot.textContent = '—';
+    elAlrt.textContent = '—';
+    elDeptRows.innerHTML = '';
+    elRecent.innerHTML = '';
+    elServerTime.textContent = '';
   }
 
-  // build a recent detection list item (with SHAP thumb + links)
-  function renderRecentItem(it, token){
+  // Build an LI for “Recent Detections” with Report / PDF / Generate XAI / View XAI
+  function renderRecentItem(it, token) {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-
     const conf = (it.confidence ?? 0).toFixed(3);
-    const tokenQS = token ? `?token=${encodeURIComponent(token)}` : '';
+    const tokenQS = token ? '?token=' + encodeURIComponent(token) : '';
 
-    const img = document.createElement('img');
-    img.className = 'thumb me-3';
-    img.alt = 'XAI';
-    img.src = `/xai/png/${it.artifact_id}${tokenQS}`;
-
-    const left = document.createElement('div');
-    left.className = 'd-flex align-items-center';
-    left.appendChild(img);
-    const meta = document.createElement('div');
-    meta.innerHTML =
-      `<div><strong>${it.artifact_id}</strong> — ${it.y_hat} (${conf})</div>
-       <div class="text-muted small">${it.dept ?? '—'} • ${it.user ?? '—'} • ${it.ts ?? '—'}</div>`;
-    left.appendChild(meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'd-flex gap-2';
-    actions.innerHTML =
-      `<a class="btn btn-sm btn-outline-primary" target="_blank" href="/report/${it.artifact_id}${tokenQS}">Report</a>
-       <a class="btn btn-sm btn-outline-secondary" target="_blank" href="/xai/${it.artifact_id}${tokenQS}">XAI</a>
-       <a class="btn btn-sm btn-outline-success" target="_blank" href="/report_pdf/${it.artifact_id}${tokenQS}">Download PDF</a>`;
-
-    li.appendChild(left);
-    li.appendChild(actions);
+    li.innerHTML =
+      '<div>' +
+        '<div><strong>' + it.artifact_id + '</strong> — ' + it.y_hat + ' (' + conf + ')</div>' +
+        '<div class="text-muted small">' +
+          (it.dept ?? '—') + ' • ' + (it.user ?? '—') + ' • ' + (it.ts ?? '—') +
+        '</div>' +
+      '</div>' +
+      '<div class="d-flex flex-wrap gap-2">' +
+        '<a class="btn btn-sm btn-outline-primary" target="_blank" ' +
+           'href="/report/' + encodeURIComponent(it.artifact_id) + tokenQS + '">' +
+          'Report (HTML)' +
+        '</a>' +
+        '<a class="btn btn-sm btn-outline-dark" target="_blank" ' +
+           'href="/report_pdf/' + encodeURIComponent(it.artifact_id) + tokenQS + '">' +
+          'PDF' +
+        '</a>' +
+        '<button type="button" ' +
+                'class="btn btn-sm btn-outline-secondary btn-xai-gen" ' +
+                'data-artifact-id="' + it.artifact_id + '">' +
+          'Generate XAI' +
+        '</button>' +
+        '<a class="btn btn-sm btn-outline-success" target="_blank" ' +
+           'href="/xai/png/' + encodeURIComponent(it.artifact_id) + tokenQS + '">' +
+          'View XAI' +
+        '</a>' +
+      '</div>';
     return li;
   }
 
-  function renderSeriesChart(days, totals, alerts){
-    seriesChart = new Chart(seriesCanvas, {
-      type: 'line',
-      data: { labels: days, datasets: [{ label: 'Totals', data: totals }, { label: 'Alerts', data: alerts }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-  }
+  async function loadAll() {
+    clearError();
+    resetUI();
 
-  function renderConfusion(labels, matrix){
-    // head
-    const headRow = document.createElement('tr');
-    headRow.innerHTML = `<th></th>` + labels.map(l => `<th class="text-center">${l}</th>`).join('');
-    cmHead.appendChild(headRow);
-    // body
-    matrix.forEach((row, i) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<th scope="row">Actual: ${labels[i]}</th>` +
-        row.map(v => `<td class="cm-cell">${v}</td>`).join('');
-      cmBody.appendChild(tr);
-    });
-  }
+    // 1) Token from input OR cookie fallback
+    let token = parseTokenInput(elToken.value);
+    if (!token) {
+      const cookieToken = getCookie('auth_token');
+      if (cookieToken) token = cookieToken;
+    }
 
-  async function loadAll(){
-    clearError(); resetUI();
-
-    let token = parseTokenInput(elToken.value) || getCookie('auth_token');
-    if (!token || !token.includes('.')) { setHint(true); showError('Paste a valid JWT (or JSON with a "token" field).'); return; }
+    if (!token || !token.includes('.')) {
+      setHint(true);
+      showError('Paste a valid JWT (or JSON with a "token" field).');
+      return;
+    }
     setHint(false);
+
+    // 2) Persist token for 1 hour (so Report/XAI links work)
     setCookie('auth_token', token, 3600);
 
     setLoading(true);
     try {
+      // Summary (protected)
       const summary = await fetchJSON('/viz/summary', token);
       elTot.textContent = summary.total ?? 0;
       elAlrt.textContent = summary.alerts ?? 0;
 
-      Object.entries(summary.by_dept || {})
-        .sort(([a],[b]) => a.localeCompare(b))
-        .forEach(([dept, vals]) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${dept}</td><td>${vals.total ?? 0}</td><td>${vals.alerts ?? 0}</td>`;
-          elDeptRows.appendChild(tr);
-        });
+      elDeptRows.innerHTML = '';
+      const by = summary.by_dept || {};
+      Object.keys(by).sort().forEach(dept => {
+        const vals = by[dept] || {};
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + dept + '</td>' +
+          '<td>' + (vals.total ?? 0) + '</td>' +
+          '<td>' + (vals.alerts ?? 0) + '</td>';
+        elDeptRows.appendChild(tr);
+      });
 
-      const series = await fetchJSON('/viz/series?days=30', token);
-      renderSeriesChart(series.days, series.totals, series.alerts);
-
-      // Confusion JSON + PNG
-      const cm = await fetchJSON('/viz/confusion', token);
-      renderConfusion(cm.labels || ['benign','phishing'], cm.matrix || [[0,0],[0,0]]);
-      const qs = `?token=${encodeURIComponent(token)}`;
-      cmImg.src = `/viz/confusion.png${qs}`;
-      cmNote.textContent = 'From docs/evidence/metrics.json (evaluate.py).';
-
+      // Recent (protected)
       const recent = await fetchJSON('/viz/recent?limit=10', token);
+      elRecent.innerHTML = '';
       (recent.items || []).forEach(it => elRecent.appendChild(renderRecentItem(it, token)));
 
-      const root = await fetchJSON('/', null);
-      elServerTime.textContent = `Server time (UTC): ${root.time || '—'}`;
-    } catch (e) {
-      showError(e.message || String(e));
+      // Server time (public)
+      const rootRes = await fetchJSON('/', null);
+      elServerTime.textContent = 'Server time (UTC): ' + (rootRes.time || '—');
+    } catch (err) {
+      showError(err.message || String(err));
     } finally {
       setLoading(false);
     }
   }
 
+  // Wire up UI
   btnLoad.addEventListener('click', loadAll);
   btnClear.addEventListener('click', () => {
-    elToken.value = ''; setCookie('auth_token','',-1); clearError(); setHint(true); resetUI();
+    elToken.value = '';
+    setCookie('auth_token', '', 0);  // clear
+    clearError();
+    setHint(true);
+    resetUI();
   });
 
+  // Delegate click for “Generate XAI” buttons
+  elRecent.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('.btn-xai-gen');
+    if (!btn) return;
+
+    clearError();
+
+    // Get token again (from input or cookie)
+    let token = parseTokenInput(elToken.value) || getCookie('auth_token');
+    if (!token || !token.includes('.')) {
+      showError('Paste a valid analyst token before generating XAI.');
+      return;
+    }
+
+    const artifactId = btn.getAttribute('data-artifact-id');
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = 'Generating…';
+
+    try {
+      const res = await fetch('/xai/' + encodeURIComponent(artifactId), {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(res.status + ' ' + res.statusText + ' — ' + txt);
+      }
+    } catch (e) {
+      showError('XAI generation failed: ' + (e.message || String(e)));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
+
+  // On load, if a cookie exists, prefill the token box (nice UX)
   const cookieToken = getCookie('auth_token');
-  if (cookieToken) { elToken.value = cookieToken; setHint(false); } else { setHint(true); }
+  if (cookieToken) {
+    elToken.value = cookieToken;
+    setHint(false);
+  } else {
+    setHint(true);
+  }
+
+  // Re-enable Load if user navigates back to this page
   window.addEventListener('pageshow', () => setLoading(false));
 })();
 </script>
