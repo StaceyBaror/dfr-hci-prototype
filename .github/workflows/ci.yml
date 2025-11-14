@@ -9,6 +9,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,21 +19,47 @@ jobs:
         with:
           python-version: "3.10"
 
+      # ---------- Cache pip to speed up runs ----------
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install system deps (WeasyPrint optional) + jq
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpango-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libcairo2 jq
+          sudo apt-get install -y \
+            libpango-1.0-0 \
+            libgdk-pixbuf2.0-0 \
+            libffi-dev \
+            libcairo2 \
+            jq
 
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ---------- Model training + evaluation ----------
       - name: Train model
         run: python services/train/train.py
 
       - name: Evaluate metrics
         run: python eval/evaluate.py
+
+      - name: Generate plots
+        run: python eval/generate_plots.py
+
+      # ---------- Upload artifacts (figures + metrics) ----------
+      - name: Upload figure artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-figures
+          path: docs/figures/*
+          if-no-files-found: warn
 
       - name: Summarize metrics in job summary
         run: |
@@ -77,3 +104,26 @@ jobs:
           name: metrics
           path: docs/evidence/*.json
           if-no-files-found: ignore
+
+      # ---------- (Optional) LaTeX build for thesis ----------
+      # Adjust 'thesis' and 'main.tex' to your actual path/file.
+      - name: Install LaTeX toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            latexmk
+
+      - name: Build thesis PDF
+        working-directory: thesis
+        run: |
+          latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+
+      - name: Upload thesis PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-pdf
+          path: thesis/main.pdf
+          if-no-files-found: warn
